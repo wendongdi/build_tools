@@ -24,3 +24,6 @@ Thumbs.db
 
 # 日志
 *.log
+build
+dists
+.gitignore
