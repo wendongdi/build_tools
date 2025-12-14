@@ -3,6 +3,7 @@ import sys
 import shutil
 import time
 import argparse
+import subprocess
 from pathlib import Path
 from setuptools import setup, Extension
 from setuptools.command.build_ext import build_ext
@@ -205,6 +206,40 @@ def prepare_dist_directory(src_dir):
     return dest_path
 
 
+def strip_files(root_dir):
+    """
+    Runs 'strip' on all .so files in the directory to remove symbols.
+    """
+    strip_cmd = shutil.which("strip")
+    if not strip_cmd:
+        print("Warning: 'strip' command not found. Skipping binary stripping.")
+        return
+
+    print("Stripping compiler symbols from binaries...")
+    count = 0
+    for root, _, filest in os.walk(root_dir):
+        for f in filest:
+            if f.endswith(".so"):
+                full_path = os.path.join(root, f)
+                try:
+                    # Use -x on macOS to be safe with shared libs, or safe default on Linux
+                    cmd = [strip_cmd, full_path]
+                    if sys.platform == "darwin":
+                        cmd = [strip_cmd, "-x", full_path]
+
+                    subprocess.run(
+                        cmd,
+                        check=True,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+                    count += 1
+                except Exception as e:
+                    print(f"Failed to strip {f}: {e}")
+
+    print(f"Stripped {count} binary files.")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Obfuscate Python project using Cython. (Builds in 'dists/' folder)"
@@ -255,6 +290,9 @@ def main():
 
     # 3. Compilation
     run_compilation(target_dir, files)
+
+    # 3.5 Security: Strip binaries
+    strip_files(target_dir)
 
     # 4. Cleanup
     if args.cleanup:
