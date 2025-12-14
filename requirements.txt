@@ -1,6 +1,0 @@
-# Python 项目打包工具链依赖
-# python-minifier + Cython + Nuitka (全部免费)
-
-python-minifier>=3.0.0
-cython>=3.0.0
-nuitka>=2.0
