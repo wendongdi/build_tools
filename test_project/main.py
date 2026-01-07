@@ -4,8 +4,8 @@ import os
 # Add current directory to path so imports work if run from here
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from data_processor.processor import process_data
-from model_utils.predictor import run_prediction
+from utils.data_processor.processor import process_data
+from utils.model_utils.predictor import run_prediction
 
 def main():
     print("Starting Test Obfuscation Project...")
