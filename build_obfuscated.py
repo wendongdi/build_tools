@@ -4,55 +4,60 @@ import shutil
 import time
 import argparse
 import subprocess
+import fnmatch
 from pathlib import Path
 from setuptools import setup, Extension
 from setuptools.command.build_ext import build_ext
 from Cython.Build import cythonize
 
 
-def get_files_to_compile(
-    src_dir, target_dirs=None, exclude_files=None, exclude_dirs=None
-):
+def is_match(rel_path_obj, pattern):
+    """
+    Helper to check if a file matches a pattern based on strict rules:
+    - If pattern starts with './', match against relative path. 
+      Supports directory matching (e.g., './core' matches './core/*').
+    - Otherwise, match against filename.
+    """
+    # Normalize path separator to forward slash for consistency
+    rel_path_str = rel_path_obj.as_posix()
+    filename = rel_path_obj.name
+    
+    if pattern.startswith("./"):
+        # Match against full relative path
+        # Remove ./ prefix
+        pat_clean = pattern[2:].rstrip("/")
+        
+        # 1. Exact match (or wildcard match if * is present)
+        if fnmatch.fnmatch(rel_path_str, pat_clean):
+            return True
+        
+        # 2. Directory content match: if pat_clean is a directory, 
+        # it should match all files inside.
+        if not pat_clean.endswith("*"):
+            if fnmatch.fnmatch(rel_path_str, pat_clean + "/*"):
+                return True
+        
+        return False
+    else:
+        # Match against filename only (recursive)
+        return fnmatch.fnmatch(filename, pattern)
+
+
+def get_files_to_compile(src_dir, include_patterns=None, exclude_patterns=None):
     """
     Walks through the directory and gathers .py files to compile.
+    Supports strict glob patterns for inclusion and exclusion.
     """
     src_path = Path(src_dir).resolve()
     files_to_compile = []
 
-    # Normalize inputs
-    if target_dirs:
-        target_dirs = [src_path / d for d in target_dirs]
-    if exclude_files:
-        exclude_files = set(exclude_files)
-    else:
-        exclude_files = set()
-
-    if exclude_dirs:
-        exclude_dirs = [src_path / d for d in exclude_dirs]
-    else:
-        exclude_dirs = []
+    if include_patterns is None:
+        include_patterns = []
+    if exclude_patterns is None:
+        exclude_patterns = []
 
     for root, dirs, files in os.walk(src_path):
         root_path = Path(root)
-
-        # Check if we should skip this directory based on target_dirs
-        if target_dirs:
-            is_target = False
-            for td in target_dirs:
-                if root_path == td or td in root_path.parents:
-                    is_target = True
-                    break
-            if not is_target:
-                continue
-
-        # Check if we should exclude this directory
-        is_excluded = False
-        for ed in exclude_dirs:
-            if root_path == ed or ed in root_path.parents:
-                is_excluded = True
-                break
-        if is_excluded:
-            continue
 
         # Common exclusions
         if "__pycache__" in dirs:
@@ -65,11 +70,34 @@ def get_files_to_compile(
         for file in files:
             if file.endswith(".py"):
                 file_path = root_path / file
+                rel_path = file_path.relative_to(src_path)
+                
+                # Logic:
+                # 1. If include_patterns exist, file must match at least one.
+                # 2. File must NOT match any exclude_patterns.
+                
+                # Step 1: Inclusion
+                if include_patterns:
+                    included = False
+                    for pat in include_patterns:
+                        if is_match(rel_path, pat):
+                            included = True
+                            break
+                    if not included:
+                        # Did not match any include pattern
+                        continue
 
-                # Check exclusions
-                if file in exclude_files:
+                # Step 2: Exclusion (Higher priority, overrides inclusion)
+                excluded = False
+                for pat in exclude_patterns:
+                    if is_match(rel_path, pat):
+                        excluded = True
+                        break
+                
+                if excluded:
                     print(f"Skipping excluded file: {file_path}")
                     continue
+
                 if file == "__init__.py":
                     # Usually safe to keep __init__.py as pure python for package recognition,
                     # or compile carefully. For robustness, let's skip obfuscating __init__.py
@@ -77,10 +105,6 @@ def get_files_to_compile(
                     # Compiling __init__.py is valid but can sometimes cause issues if it uses certain globals.
                     # We will compile it but be aware.
                     pass
-
-                # Calculate module name relative to src_dir
-                rel_path = file_path.relative_to(src_path)
-                module_name = str(rel_path.with_suffix("")).replace(os.sep, ".")
 
                 files_to_compile.append(str(file_path))
 
@@ -148,6 +172,9 @@ def run_compilation(src_dir, files_to_compile):
                     "language_level": "3",
                     "always_allow_keywords": True,
                     "annotation_typing": False,
+                    "emit_code_comments": False,
+                    "boundscheck": False,
+                    "wraparound": False,
                 },
                 build_dir="build",
                 quiet=False,
@@ -249,10 +276,16 @@ def main():
         "--exclude",
         nargs="*",
         default=[],
-        help="Specific files to exclude (e.g., main.py)",
+        help="Patterns to exclude (e.g., 'main.py', 'tests/*').",
     )
     parser.add_argument(
-        "--dirs", nargs="*", help="Specific subdirectories to obfuscate (default: all)"
+        "--include",
+        nargs="*",
+        default=[],
+        help="Patterns to include (e.g., 'core/*', '*.py'). If specified, only matching files are compiled.",
+    )
+    parser.add_argument(
+        "--dirs", nargs="*", help="Specific subdirectories to obfuscate (legacy support, converts to include patterns)"
     )
     parser.add_argument(
         "--cleanup",
@@ -277,9 +310,24 @@ def main():
     print(f"Processing build in: {target_dir}")
 
     # 2. Identify files IN THE TARGET DIR
-    # Note: We must pass string path to get_files_to_compile
+    include_patterns = args.include if args.include else []
+    
+    # Support legacy --dirs by converting to include patterns
+    if args.dirs:
+        for d in args.dirs:
+            # Assumes d is a directory name relative to src
+            # We append '*' to match contents if it looks like a directory
+            # Clean trailing slash and ensure it starts with ./
+            d_clean = d.strip().rstrip(os.sep)
+            if d_clean.startswith("./"):
+                # Already has prefix
+                pat = os.path.join(d_clean, "*")
+            else:
+                pat = "./" + os.path.join(d_clean, "*")
+            include_patterns.append(pat)
+
     files = get_files_to_compile(
-        target_dir, target_dirs=args.dirs, exclude_files=args.exclude
+        target_dir, include_patterns=include_patterns, exclude_patterns=args.exclude
     )
 
     if not files:

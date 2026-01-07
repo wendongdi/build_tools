@@ -15,28 +15,77 @@ pip install -r requirements.txt
 
 ## 使用方法
 
+## 使用方法
+
 ### 1. 基础命令
 
 运行脚本并指定您的源项目路径：
 
 ```bash
-python3 build_obfuscated.py /path/to/my_project --dirs [folders] --exclude [files]
+python3 build_obfuscated.py /path/to/my_project [options]
 ```
 
-* 运行构建脚本的Python版本必须与原项目一致，建议直接用原项目的Python环境来构建。
-* `--dirs`: 指定需要加密的文件夹路径（及其子文件夹）。
-* `--exclude`: 指定**不进行编译**的文件。
-  * **重要提示**：请务必排除 `__init__.py` 以保留包的导入结构。
-  * 请排除主入口脚本（如 `main.py`），否则无法直接运行。
+* **运行环境要求**: 运行构建脚本的 Python 版本必须与目标运行环境的 Python 版本完全一致。
 
-### 2. 常用示例（推荐）
+#### 核心参数
 
-如果您只想加密特定文件夹（例如 `risk/bots`），同时确保入口脚本正常工作，请使用以下命令：
+*   `--include [patterns...]`: 指定**需要编译**的文件模式（白名单）。**支持传入多个模式，用空格分隔**。
+*   `--exclude [patterns...]`: 指定**不进行编译**的文件模式（黑名单）。优先级高于 `--include`。**支持传入多个模式，用空格分隔**。
+*   `--dirs [dirs...]`: （兼容旧版）指定包含的目录。会自动转换为 `--include ./dir_name/*`。
+*   `--cleanup` / `--no-cleanup`: 编译后是否删除原始 `.py` 文件（默认删除）。
+
+#### 模式匹配规则 (Pattern Matching)
+
+工具支持灵活的通配符匹配（支持 `*`），规则如下：
+
+1.  **相对路径匹配 (`./` 前缀)**:
+    *   如果模式以 `./` 开头（例如 `./core` 或 `./utils/main.py`），则严格匹配相对于项目根目录的路径。
+    *   **目录自动递归**: 如果路径指向一个目录且没有通配符（例如 `./core`），会自动匹配该目录下的所有内容（等同于 `./core/*`）。
+
+2.  **文件名递归匹配 (无前缀)**:
+    *   如果模式**不**以 `./` 开头（例如 `utils.py` 或 `__init__.py`），则会在整个项目中递归查找匹配的文件名。
+
+**优先级**: `Exclude` > `Include`。即如果一个文件同时满足包含和排除规则，它将被**排除**。
+
+### 2. 常用示例 (Recommended)
+
+#### 示例 A：只加密特定核心目录
+
+只编译 `risk/bots` 目录下的所有代码，排除所有 `__init__.py`（保留包结构）和 `main.py`（保留入口）。
 
 ```bash
-python3 build_obfuscated.py /Users/david/Documents/GitHub/fut_trans_nas/ft_futures_data \
-    --dirs risk/bots \
-    --exclude pilot.py __init__.py
+python3 build_obfuscated.py ./my_project \
+    --include "./risk/bots" \
+    --exclude "__init__.py" "main.py"
+```
+
+#### 示例 B：加密整个项目，排除测试和配置
+
+加密所有 `.py` 文件，但排除 `tests` 目录、`config.py` 和 `main.py`。
+
+```bash
+python3 build_obfuscated.py ./my_project \
+    --include "*.py" \
+    --exclude "./tests" "config.py" "main.py" "__init__.py"
+```
+
+#### 示例 C：仅加密特定名称的文件（递归）
+
+加密项目中所有名为 `algorithm.py` 的文件，无论其在哪层目录下。
+
+```bash
+python3 build_obfuscated.py ./my_project \
+    --include "algorithm.py"
+```
+
+#### 示例 D：加密多个特定目录
+
+同时加密 `core`、`utils` 和 `plugins/payment` 这三个目录，并排除所有 `__init__.py`。
+
+```bash
+python3 build_obfuscated.py ./my_project \
+    --include "./core" "./utils" "./plugins/payment" \
+    --exclude "__init__.py"
 ```
 
 ## 工作流程
